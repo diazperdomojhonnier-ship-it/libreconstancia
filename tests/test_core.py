@@ -11,7 +11,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from libreconstancia import cli
 from libreconstancia.core import (VerificationError, b64decode, canonical_bytes, issue,
                                  key_id, load_public_key_record, make_verification_url,
-                                 public_key_record, verify)
+                                 public_key_record, sign_revocation_list, verify,
+                                 verify_revocation_list)
 
 
 class CertificateTests(unittest.TestCase):
@@ -72,6 +73,44 @@ class CertificateTests(unittest.TestCase):
         second = canonical_bytes({"a": "á", "b": 2})
         self.assertEqual(first, second)
 
+    def test_signed_revocation_list_preserves_signature_and_marks_revoked(self):
+        identifier = self.document["payload"]["certificate_id"]
+        registry = sign_revocation_list(self.private, [identifier], updated_on="2026-11-17")
+        snapshot = verify_revocation_list(registry, self.private.public_key())
+        self.assertEqual(snapshot["revoked"], [identifier])
+        with self.assertRaisesRegex(VerificationError, "revocada"):
+            verify(self.document, self.private.public_key(), revocations=registry)
+        self.assertEqual(verify(self.document, self.private.public_key())["hours"], 120)
+
+    def test_signed_empty_registry_does_not_revoke(self):
+        empty = sign_revocation_list(self.private, [], updated_on="2026-11-17")
+        self.assertEqual(verify(self.document, self.private.public_key(), revocations=empty)["hours"], 120)
+
+    def test_changed_registry_and_wrong_key_fail_closed(self):
+        registry = sign_revocation_list(self.private, [], updated_on="2026-11-17")
+        modified = {**registry, "updated_on": "2026-11-18"}
+        with self.assertRaisesRegex(VerificationError, "Firma"):
+            verify_revocation_list(modified, self.private.public_key())
+        with self.assertRaisesRegex(VerificationError, "otra clave"):
+            verify_revocation_list(registry, Ed25519PrivateKey.generate().public_key())
+
+    def test_registry_rejects_invalid_or_duplicate_identifiers(self):
+        identifier = self.document["payload"]["certificate_id"]
+        for values in (["no-es-uuid"], [identifier, identifier], ["abc", identifier]):
+            with self.subTest(values=values):
+                if values == [identifier, identifier]:
+                    altered = sign_revocation_list(self.private, [identifier], updated_on="2026-11-17")
+                    altered["revoked"] = values
+                    with self.assertRaises(VerificationError):
+                        verify_revocation_list(altered, self.private.public_key())
+                else:
+                    with self.assertRaises(VerificationError):
+                        sign_revocation_list(self.private, values, updated_on="2026-11-17")
+
+    def test_registry_rejects_invalid_date(self):
+        with self.assertRaises(VerificationError):
+            sign_revocation_list(self.private, [], updated_on="2026-02-30")
+
     def test_key_generation_and_web_publish_end_to_end(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
@@ -93,13 +132,40 @@ class CertificateTests(unittest.TestCase):
                 "verify", "--certificate", str(root / "cert.json"),
                 "--public-key", str(public_file)
             ]), 0)
+            with patch("libreconstancia.cli.getpass", return_value="clave-larga-segura"):
+                self.assertEqual(cli.main([
+                    "revocations", "--private-key", str(private_file),
+                    "--output", str(root / "revocations-initial.json")
+                ]), 0)
             self.assertEqual(cli.main([
-                "publish", "--public-key", str(public_file), "--output", str(root / "public")
+                "verify", "--certificate", str(root / "cert.json"),
+                "--public-key", str(public_file),
+                "--revocations", str(root / "revocations-initial.json")
+            ]), 0)
+            self.assertEqual(cli.main([
+                "publish", "--public-key", str(public_file),
+                "--revocations", str(root / "revocations-initial.json"),
+                "--output", str(root / "public")
             ]), 0)
             self.assertTrue((root / "public" / "index.html").exists())
             self.assertTrue((root / "public" / "verify.js").exists())
+            self.assertEqual(json.loads((root / "public" / "revocations.json").read_text()),
+                             json.loads((root / "revocations-initial.json").read_text()))
             bundle = json.loads((root / "public" / "trusted-keys.json").read_text())
             self.assertEqual(bundle["keys"][0], json.loads(public_file.read_text()))
+            certificate_id = json.loads((root / "cert.json").read_text())["payload"]["certificate_id"]
+            with patch("libreconstancia.cli.getpass", return_value="clave-larga-segura"):
+                self.assertEqual(cli.main([
+                    "revocations", "--private-key", str(private_file),
+                    "--previous", str(root / "revocations-initial.json"),
+                    "--revoke", certificate_id,
+                    "--output", str(root / "revocations-updated.json")
+                ]), 0)
+            self.assertEqual(cli.main([
+                "verify", "--certificate", str(root / "cert.json"),
+                "--public-key", str(public_file),
+                "--revocations", str(root / "revocations-updated.json")
+            ]), 2)
 
     @unittest.skipUnless(importlib.util.find_spec("qrcode"), "Dependencia opcional QR no instalada")
     def test_issue_creates_readable_qr_png(self):

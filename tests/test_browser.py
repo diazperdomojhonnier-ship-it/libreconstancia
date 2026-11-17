@@ -13,7 +13,7 @@ import unittest
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from libreconstancia.core import issue, make_verification_url, public_key_record
+from libreconstancia.core import issue, make_verification_url, public_key_record, sign_revocation_list
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -33,6 +33,8 @@ class BrowserTests(unittest.TestCase):
             credential = issue(private, issuer="Centro de prueba", participant="Persona de ejemplo",
                                program="Lectura", hours=80, issued_on="2026-11-17")
             (root / "trusted-keys.json").write_text(json.dumps({"keys": [public_key_record(private.public_key())]}))
+            (root / "revocations.json").write_text(json.dumps(
+                sign_revocation_list(private, [], updated_on="2026-11-17")))
             server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(root)))
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -46,6 +48,7 @@ class BrowserTests(unittest.TestCase):
                     self.skipTest("El entorno impide abrir sockets de Chromium")
                 self.assertEqual(result.returncode, 0, result.stderr[-1500:])
                 self.assertIn("Firma válida", result.stdout)
+                self.assertIn("No figura revocada", result.stdout)
                 self.assertIn("Persona de ejemplo", result.stdout)
                 self.assertNotIn('id="status" role="status" aria-live="polite">No verificado', result.stdout)
             finally:
