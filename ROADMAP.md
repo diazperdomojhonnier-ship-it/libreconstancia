@@ -10,9 +10,15 @@ Estas son propuestas, no funciones existentes.
 - Enlace verificable y código QR opcional.
 - Claves privadas cifradas y pruebas automatizadas.
 
-## 0.2 · Prioridad alta
+## 0.2 · Entregado (experimental)
 
-- Lista de revocación firmada, con estado visible y caché controlada.
+- Lista de revocación firmada, con estado visible y lectura sin caché desde el navegador.
+- Pruebas de interoperabilidad entre Python y JavaScript para revocaciones.
+- Muestras públicas con datos ficticios, para evaluar la herramienta sin generar claves.
+
+## Siguientes mejoras de seguridad y confianza
+
+- Frescura del registro verificable con una política de actualización y protección contra versiones antiguas.
 - Rotación de claves y conservación de claves históricas confiables.
 - Pruebas de navegador automatizadas para Chrome, Firefox y Safari.
 - Pruebas de QR sobre impresiones de tamaño reducido.
