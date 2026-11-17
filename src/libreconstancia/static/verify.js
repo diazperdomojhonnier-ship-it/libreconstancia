@@ -1,6 +1,7 @@
 // Simple verifier with no tracking, CDN or external dependencies.
 const status = document.querySelector('#status');
 const details = document.querySelector('#details');
+const revocationStatus = document.querySelector('#revocation-status');
 
 function fail(message) {
   status.className = 'error';
@@ -38,6 +39,51 @@ function validPayload(p) {
   return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0, 10) === p.issued_on;
 }
 
+async function checkRevocation(cert, trustedKey) {
+  revocationStatus.hidden = false;
+  try {
+    const response = await fetch('./revocations.json', {cache: 'no-store'});
+    if (!response.ok) throw new Error('no hay un registro de revocaciones disponible');
+    const registry = await response.json();
+    const fields = ['key_id', 'revoked', 'schema', 'signature', 'updated_on'];
+    if (!registry || typeof registry !== 'object' || Array.isArray(registry) ||
+        JSON.stringify(Object.keys(registry).sort()) !== JSON.stringify(fields)) {
+      throw new Error('estructura del registro incorrecta');
+    }
+    if (registry.schema !== 1 || registry.key_id !== cert.key_id ||
+        typeof registry.updated_on !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(registry.updated_on)) {
+      throw new Error('registro no corresponde a esta clave o tiene fecha inválida');
+    }
+    const date = new Date(`${registry.updated_on}T00:00:00Z`);
+    if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== registry.updated_on) {
+      throw new Error('fecha del registro no válida');
+    }
+    if (!Array.isArray(registry.revoked) || registry.revoked.length > 10000 ||
+        !registry.revoked.every((id, index) => typeof id === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) &&
+          (index === 0 || registry.revoked[index - 1] < id))) {
+      throw new Error('identificadores de revocación inválidos');
+    }
+    const signed = {schema: registry.schema, key_id: registry.key_id,
+                    updated_on: registry.updated_on, revoked: registry.revoked};
+    const signature = decode64url(registry.signature);
+    if (signature.length !== 64 || !await crypto.subtle.verify('Ed25519', trustedKey, signature,
+      new TextEncoder().encode(canonical(signed)))) {
+      throw new Error('firma del registro de revocaciones inválida');
+    }
+    if (registry.revoked.includes(cert.payload.certificate_id)) {
+      revocationStatus.className = 'error';
+      revocationStatus.textContent = `CONSTANCIA REVOCADA · Figura en la lista firmada del ${registry.updated_on}`;
+    } else {
+      revocationStatus.className = 'ok';
+      revocationStatus.textContent = `No figura revocada en la lista firmada del ${registry.updated_on} (podría existir una más reciente).`;
+    }
+  } catch (error) {
+    revocationStatus.className = 'warning';
+    revocationStatus.textContent = `Estado de revocación NO COMPROBADO: ${error.message || 'registro inaccesible'}`;
+  }
+}
+
 async function main() {
   try {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
@@ -72,6 +118,7 @@ async function main() {
     details.hidden = false;
     status.className = 'ok';
     status.textContent = 'Firma válida · Documento íntegro y firmado por la clave reconocida en este sitio';
+    await checkRevocation(cert, trustedKey);
   } catch (error) {
     fail(error.message || 'No se pudo verificar');
   }
