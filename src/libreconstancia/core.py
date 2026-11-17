@@ -1,6 +1,7 @@
 """Stable, auditable format for educational certificates (schema v1)."""
 
 import base64
+from collections.abc import Iterable
 from datetime import date
 import hashlib
 import json
@@ -18,6 +19,8 @@ class VerificationError(ValueError):
 
 
 FIELDS = frozenset({"schema", "certificate_id", "issuer", "participant", "program", "hours", "issued_on"})
+REVOCATION_FIELDS = frozenset({"schema", "key_id", "updated_on", "revoked"})
+MAX_REVOKED = 10_000
 
 
 def canonical_bytes(value: dict) -> bytes:
@@ -67,31 +70,94 @@ def load_public_key_record(record: dict) -> Ed25519PublicKey:
     return pub
 
 
+def _canonical_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(UUID(value)) == value
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _valid_date(value: object) -> bool:
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+        return False
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
 def validate_payload(payload: dict) -> None:
     if not isinstance(payload, dict) or set(payload) != FIELDS:
         raise VerificationError("Campos del certificado incorrectos")
     if type(payload["schema"]) is not int or payload["schema"] != 1:
         raise VerificationError("Versión de certificado no admitida")
-    try:
-        identifier = UUID(payload["certificate_id"])
-    except (TypeError, ValueError, AttributeError) as exc:
-        raise VerificationError("Identificador del certificado inválido") from exc
-    if str(identifier) != payload["certificate_id"]:
-        raise VerificationError("Identificador del certificado no canónico")
+    if not _canonical_uuid(payload["certificate_id"]):
+        raise VerificationError("Identificador del certificado inválido o no canónico")
     for field in ("issuer", "participant", "program"):
         value = payload[field]
         if not isinstance(value, str) or not value.strip() or len(value) > 250:
             raise VerificationError(f"Campo obligatorio inválido: {field}")
     if type(payload["hours"]) is not int or not 1 <= payload["hours"] <= 100_000:
         raise VerificationError("La intensidad debe ser un entero positivo")
-    when = payload["issued_on"]
-    if not isinstance(when, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
-        raise VerificationError("La fecha debe usar AAAA-MM-DD")
+    if not _valid_date(payload["issued_on"]):
+        raise VerificationError("Fecha de expedición inválida (usa AAAA-MM-DD)")
+
+
+def validate_revocation_payload(payload: dict) -> None:
+    """Validate the fixed revocation-list v1 schema before checking its signature."""
+    if not isinstance(payload, dict) or set(payload) != REVOCATION_FIELDS:
+        raise VerificationError("Campos del registro de revocaciones incorrectos")
+    if type(payload["schema"]) is not int or payload["schema"] != 1:
+        raise VerificationError("Versión del registro de revocaciones no admitida")
+    if not isinstance(payload["key_id"], str) or re.fullmatch(r"[0-9a-f]{32}", payload["key_id"]) is None:
+        raise VerificationError("Identificador de clave del registro inválido")
+    if not _valid_date(payload["updated_on"]):
+        raise VerificationError("Fecha del registro inválida (usa AAAA-MM-DD)")
+    revoked = payload["revoked"]
+    if not isinstance(revoked, list) or len(revoked) > MAX_REVOKED:
+        raise VerificationError("La lista de revocaciones es inválida o demasiado grande")
+    if not all(_canonical_uuid(item) for item in revoked) or revoked != sorted(set(revoked)):
+        raise VerificationError("La lista debe contener UUID canónicos, ordenados y sin duplicados")
+
+
+def sign_revocation_list(private_key: Ed25519PrivateKey, revoked: Iterable[str],
+                         *, updated_on: str | None = None) -> dict:
+    """Create a signed snapshot; consumers must not treat it as proof of current status."""
+    if isinstance(revoked, (str, bytes)):
+        raise VerificationError("La lista de revocaciones debe ser una secuencia de UUID")
+    identifiers = list(revoked)
+    if len(identifiers) > MAX_REVOKED:
+        raise VerificationError("Demasiadas revocaciones")
+    if not all(_canonical_uuid(item) for item in identifiers):
+        raise VerificationError("UUID de revocación inválido")
+    payload = {
+        "schema": 1,
+        "key_id": key_id(private_key.public_key()),
+        "updated_on": updated_on if updated_on is not None else date.today().isoformat(),
+        "revoked": sorted(set(identifiers)),
+    }
+    validate_revocation_payload(payload)
+    return {**payload, "signature": b64encode(private_key.sign(canonical_bytes(payload)))}
+
+
+def verify_revocation_list(registry: dict, trusted_public_key: Ed25519PublicKey) -> dict:
+    """Authenticate a revocation snapshot against the same trusted issuer key."""
+    if not isinstance(registry, dict) or set(registry) != REVOCATION_FIELDS | {"signature"}:
+        raise VerificationError("Estructura del registro de revocaciones incorrecta")
+    payload = {field: registry[field] for field in REVOCATION_FIELDS}
+    validate_revocation_payload(payload)
+    if payload["key_id"] != key_id(trusted_public_key):
+        raise VerificationError("El registro pertenece a otra clave emisora")
+    signature = b64decode(registry["signature"])
+    if len(signature) != 64:
+        raise VerificationError("Firma del registro de revocaciones inválida")
     try:
-        if date.fromisoformat(when).isoformat() != when:
-            raise ValueError("Fecha no canónica")
-    except ValueError as exc:
-        raise VerificationError("Fecha de expedición inválida") from exc
+        trusted_public_key.verify(signature, canonical_bytes(payload))
+    except InvalidSignature as exc:
+        raise VerificationError("Firma del registro de revocaciones inválida") from exc
+    return payload
 
 
 def issue(private_key: Ed25519PrivateKey, *, issuer: str, participant: str, program: str,
@@ -110,7 +176,8 @@ def issue(private_key: Ed25519PrivateKey, *, issuer: str, participant: str, prog
     return {"payload": payload, "key_id": key_id(private_key.public_key()), "signature": b64encode(signature)}
 
 
-def verify(document: dict, trusted_public_key: Ed25519PublicKey) -> dict:
+def verify(document: dict, trusted_public_key: Ed25519PublicKey,
+           *, revocations: dict | None = None) -> dict:
     if not isinstance(document, dict) or set(document) != {"payload", "key_id", "signature"}:
         raise VerificationError("Estructura del documento firmado inválida")
     payload = document["payload"]
@@ -124,6 +191,10 @@ def verify(document: dict, trusted_public_key: Ed25519PublicKey) -> dict:
         trusted_public_key.verify(signature, canonical_bytes(payload))
     except InvalidSignature as exc:
         raise VerificationError("Firma inválida: el documento cambió o no pertenece al emisor") from exc
+    if revocations is not None:
+        snapshot = verify_revocation_list(revocations, trusted_public_key)
+        if payload["certificate_id"] in snapshot["revoked"]:
+            raise VerificationError("Constancia revocada según el registro firmado")
     return payload
 
 
