@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Verificación de constancias · LibreConstancia</title>
+  <style>
+    :root{font-family:system-ui,Arial,sans-serif;color:#14243a;background:#f3f6f9;color-scheme:light}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1rem}
+    main{background:#fff;border:1px solid #dce4ef;border-radius:16px;box-shadow:0 16px 45px #12243a17;max-width:640px;padding:2rem;width:100%}
+    h1{margin:0 0 1rem;font-size:clamp(1.6rem,5vw,2.2rem)}p{line-height:1.6}
+    #status,#revocation-status{padding:1rem;border-radius:10px;background:#eaf3fc;font-weight:650}
+    .ok{background:#dbf9e8!important;color:#116539}.error{background:#ffe9e7!important;color:#a22b21}
+    .warning{background:#fff1cf!important;color:#805a00}
+    dl{display:grid;grid-template-columns:minmax(120px,180px) 1fr;gap:.75rem;margin-top:1.5rem}
+    dt{font-weight:600;color:#53627a}dd{margin:0;overflow-wrap:anywhere}
+    small{display:block;border-top:1px solid #e5eaf0;margin-top:2rem;padding-top:1rem;color:#53627a;line-height:1.6}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Verificación de constancias</h1>
+    <p>Comprueba que el documento no fue alterado y que lo firmó una clave pública reconocida por este sitio.</p>
+    <p id="status" role="status" aria-live="polite">Verificando…</p>
+    <p id="revocation-status" role="status" aria-live="polite" hidden></p>
+    <dl id="details" hidden>
+      <dt>Participante</dt><dd id="participant"></dd>
+      <dt>Programa</dt><dd id="program"></dd>
+      <dt>Intensidad</dt><dd id="hours"></dd>
+      <dt>Entidad emisora</dt><dd id="issuer"></dd>
+      <dt>Fecha de expedición</dt><dd id="issued_on"></dd>
+      <dt>Código único</dt><dd id="certificate_id"></dd>
+    </dl>
+    <small>Una firma válida prueba integridad respecto de la clave de confianza. La lista de revocaciones es una fotografía de una fecha y podría estar desactualizada. Ninguna de estas verificaciones prueba que se completó una formación, que la entidad sea acreditada o que el documento tenga reconocimiento legal. No se envían datos a terceros mediante esta página.</small>
+  </main>
+  <script type="module" src="./verify.js"></script>
+</body>
+</html>
