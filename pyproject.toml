@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +8,12 @@ version = "0.2.0"
 description = "Open-source, self-hosted and signed educational certificates with offline-verifiable authenticity"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "Jhonnier Díaz Perdomo"}]
 keywords = ["certificates", "education", "ed25519", "qr", "open-source"]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
   "Topic :: Education",
   "Topic :: Security :: Cryptography",
 ]
