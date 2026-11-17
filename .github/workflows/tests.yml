@@ -2,9 +2,12 @@ name: Pruebas
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python: ['3.10', '3.12', '3.13']
@@ -13,5 +16,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python -m pip install -e '.[qr]'
+      - run: node --check src/libreconstancia/static/verify.js
+      - run: node --check examples/demo/demo.js
+      - run: python tools/build_demo_site.py --check
       - run: python -m unittest discover -s tests -v
