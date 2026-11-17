@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libreconstancia"
+version = "0.1.0"
+description = "Open-source, self-hosted and signed educational certificates with offline-verifiable authenticity"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Jhonnier Díaz Perdomo"}]
+keywords = ["certificates", "education", "ed25519", "qr", "open-source"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Education",
+  "Topic :: Security :: Cryptography",
+]
+dependencies = ["cryptography>=41"]
+
+[project.optional-dependencies]
+qr = ["qrcode[pil]>=7.4"]
+
+[project.scripts]
+libreconstancia = "libreconstancia.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+libreconstancia = ["static/*.html", "static/*.js"]

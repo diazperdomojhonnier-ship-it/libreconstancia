@@ -1,0 +1,17 @@
+.venv/
+.deps/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+.pytest_cache/
+.env
+private-keys/
+private.pem
+constancia.json
+constancia-qr.png
+credential.json
+credential-qr.png
+public/
